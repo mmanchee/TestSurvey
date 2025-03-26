@@ -1,0 +1,26 @@
+﻿@page
+@model TestSurvey.Presentation.Pages.Page2Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 2</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage2.Rating" class="form-label">Rate this survey</label>
+        <input asp-for="SurveyPage2.Rating" class="form-range" type="range" min="1" max="5" />
+        <span class="form-text">Rating: @Model.SurveyPage2.Rating</span>
+        <span asp-validation-for="SurveyPage2.Rating" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage2.Feedback" class="form-label">Feedback</label>
+        <textarea asp-for="SurveyPage2.Feedback" class="form-control"></textarea>
+        <span asp-validation-for="SurveyPage2.Feedback" class="text-danger"></span>
+    </div>
+    <!-- Use asp-page-handler to wire-up the buttons -->
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Next" class="btn btn-primary">Next</button>
+</form>
+
+@section Scripts {
+        <partial name="_ValidationScriptsPartial" />
+}

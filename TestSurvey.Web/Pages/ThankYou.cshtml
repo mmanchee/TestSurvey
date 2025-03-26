@@ -1,0 +1,36 @@
+﻿@page
+@model TestSurvey.Presentation.Pages.ThankYouModel
+@{
+    Layout = "_Layout";
+}
+<h2>Thank You</h2>
+<p>Thank you for taking the survey, your information has been successfully submitted.</p>
+<div class="mt-4">
+    <h4>Survey Details:</h4>
+    <ul class="list-group">
+        <li class="list-group-item">
+            <strong>Date:</strong> @Model.Survey.DateOfSurvey?.ToString("d")
+        </li>
+        <li class="list-group-item">
+            <strong>Name:</strong> @Model.Survey.Name
+        </li>
+        <li class="list-group-item">
+            <strong>Rating:</strong> @Model.Survey.Rating
+        </li>
+        <li class="list-group-item">
+            <strong>Feedback:</strong> @Model.Survey.Feedback
+        </li>
+        <li class="list-group-item">
+            <strong>Favorite Color:</strong> @Model.Survey.FavoriteColor
+        </li>
+        <li class="list-group-item">
+            <strong>Reason:</strong> @Model.Survey.Why
+        </li>
+        <li class="list-group-item">
+            <strong>Weather:</strong> @Model.Survey.Weather
+        </li>
+        <li class="list-group-item">
+            <strong>Feeling:</strong> @string.Join(", ", Model.Survey.Feeling ?? new List<string>())
+        </li>
+    </ul>
+</div>

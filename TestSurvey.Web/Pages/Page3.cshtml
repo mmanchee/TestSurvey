@@ -1,0 +1,31 @@
+﻿@page
+@model TestSurvey.Presentation.Pages.Page3Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 3</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.FavoriteColor" class="form-label">Favorite Color</label>
+        <select asp-for="SurveyPage3.FavoriteColor" class="form-select">
+            <option value="">Select a color</option>
+            <option value="Red">Red</option>
+            <option value="Blue">Blue</option>
+            <option value="Green">Green</option>
+            <option value="Yellow">Yellow</option>
+        </select>
+        <span asp-validation-for="SurveyPage3.FavoriteColor" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.Why" class="form-label">Why</label>
+        <textarea asp-for="SurveyPage3.Why" class="form-control"></textarea>
+        <span asp-validation-for="SurveyPage3.Why" class="text-danger"></span>
+    </div>
+    <!-- Back navigates to Page2; Next navigates to Page4 -->
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Next" class="btn btn-primary">Next</button>
+</form>
+
+@section Scripts {
+        <partial name="_ValidationScriptsPartial" />
+}

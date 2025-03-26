@@ -1,0 +1,23 @@
+﻿@page
+@model TestSurvey.Presentation.Pages.Page1Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 1</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage1.DateOfSurvey" class="form-label">Today's Date</label>
+        <input asp-for="SurveyPage1.DateOfSurvey" class="form-control" type="date" />
+        <span asp-validation-for="SurveyPage1.DateOfSurvey" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage1.Name" class="form-label">Name</label>
+        <input asp-for="SurveyPage1.Name" class="form-control" type="text" />
+        <span asp-validation-for="SurveyPage1.Name" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-primary">Next</button>
+</form>
+
+@section Scripts {
+        <partial name="_ValidationScriptsPartial" />
+}

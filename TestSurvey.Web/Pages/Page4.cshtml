@@ -1,0 +1,62 @@
+﻿@page
+@model TestSurvey.Presentation.Pages.Page4Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 4</h2>
+<form method="post">
+    <!-- Weather: radio buttons -->
+    <div class="mb-3">
+        <label class="form-label">Weather</label>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" id="weatherSunny" name="SurveyPage4.Weather" value="Sunny" 
+            @(Model.SurveyPage4?.Weather == "Sunny" ? "checked" : "") />
+            <label class="form-check-label" for="weatherSunny">Sunny</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" id="weatherRainy" name="SurveyPage4.Weather" value="Rainy" 
+            @(Model.SurveyPage4?.Weather == "Rainy" ? "checked" : "") />
+            <label class="form-check-label" for="weatherRainy">Rainy</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" id="weatherOvercast" name="SurveyPage4.Weather" value="Overcast" 
+            @(Model.SurveyPage4?.Weather == "Overcast" ? "checked" : "") />
+            <label class="form-check-label" for="weatherOvercast">Overcast</label>
+        </div>
+        <span asp-validation-for="SurveyPage4.Weather" class="text-danger"></span>
+    </div>
+
+    <!-- Feeling: checkboxes -->
+    <div class="mb-3">
+        <label class="form-label">Feeling</label>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="feelingHappy" name="SurveyPage4.Feeling" value="Happy"
+            @(Model.SurveyPage4?.Feeling != null && Model.SurveyPage4.Feeling.Contains("Happy") ? "checked" : "") />
+            <label class="form-check-label" for="feelingHappy">Happy</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="feelingSad" name="SurveyPage4.Feeling" value="Sad"
+            @(Model.SurveyPage4?.Feeling != null && Model.SurveyPage4.Feeling.Contains("Sad") ? "checked" : "") />
+            <label class="form-check-label" for="feelingSad">Sad</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="feelingBlah" name="SurveyPage4.Feeling" value="Blah"
+            @(Model.SurveyPage4?.Feeling != null && Model.SurveyPage4.Feeling.Contains("Blah") ? "checked" : "") />
+            <label class="form-check-label" for="feelingBlah">Blah</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="feelingExtatic" name="SurveyPage4.Feeling" value="Extatic"
+            @(Model.SurveyPage4?.Feeling != null && Model.SurveyPage4.Feeling.Contains("Extatic") ? "checked" : "") />
+            <label class="form-check-label" for="feelingExtatic">Extatic</label>
+        </div>
+        <span asp-validation-for="SurveyPage4.Feeling" class="text-danger"></span>
+    </div>
+
+    <!-- Navigation buttons -->
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Submit" class="btn btn-primary">Submit</button>
+</form>
+
+@section Scripts {
+        <partial name="_ValidationScriptsPartial" />
+}
