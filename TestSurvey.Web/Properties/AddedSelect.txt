@@ -1,0 +1,585 @@
+﻿Below is one complete, detailed implementation that meets your requirements. In this example, every lookup table in your SQL Server will have only two columns—**Id** and **Name**. We’ll assume that for each survey question you have a separate table (for example, a table named “FavoriteColor” for the dropdown options, one named “Weather” for the radio buttons, and one named “Feeling” for the checkboxes).
+
+The strategy is as follows:
+
+1. Define a simple model (called `LookupItem`) that represents a row (with Id and Name).  
+2. Create a repository that uses ADO.NET (or Dapper if you prefer) to query any lookup table by name.  
+3. Create a service layer that calls that repository.  
+4. Update your Razor page view models and page models (‑ for Page3 and Page4 in your survey) to load the lookup options on GET.  
+5. Update your Razor views to render the options in loops so that adding a new survey question later is as simple as creating a new lookup table and (if needed) a new view model property.
+
+Below is the complete implementation with all new code.
+
+---
+
+## 1. Create the Lookup Model
+
+**File: Model/Models/LookupItem.cs**
+
+```csharp
+namespace TestSurvey.Model.Models
+{
+    public class LookupItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+    }
+}
+```
+
+This model represents any lookup record from your lookup tables.
+
+---
+
+## 2. Create the Lookup Repository
+
+We define an interface to get lookup items given a table name.
+
+**File: DAService/Data/ILookupRepository.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.DAService.Data
+{
+    public interface ILookupRepository
+    {
+        Task<List<LookupItem>> GetLookupAsync(string tableName);
+    }
+}
+```
+
+Now implement it using ADO.NET. (Make sure your project references Microsoft.Data.SqlClient.)
+
+**File: DataAccess/LookupRepository.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.Data;
+using System.Threading.Tasks;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Data.SqlClient;
+
+namespace TestSurvey.DataAccess
+{
+    public class LookupRepository : ILookupRepository
+    {
+        private readonly string _connectionString;
+
+        public LookupRepository(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
+        }
+
+        public async Task<List<LookupItem>> GetLookupAsync(string tableName)
+        {
+            var lookupItems = new List<LookupItem>();
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                // Note: if your table names are hardcoded and safe, you can use string interpolation.
+                // Otherwise, you need proper validation to avoid SQL injection.
+                var query = $"SELECT Id, Name FROM {tableName} ORDER BY Id";
+
+                using (var command = new SqlCommand(query, connection))
+                {
+                    command.CommandType = CommandType.Text;
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            lookupItems.Add(new LookupItem
+                            {
+                                Id = reader.GetInt32(0),
+                                Name = reader.GetString(1)
+                            });
+                        }
+                    }
+                }
+            }
+
+            return lookupItems;
+        }
+    }
+}
+```
+
+---
+
+## 3. Create the Lookup Service
+
+Define its interface:
+
+**File: BLService/Services/ILookupService.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.BLService.Services
+{
+    public interface ILookupService
+    {
+        Task<List<LookupItem>> GetLookupByTableAsync(string tableName);
+    }
+}
+```
+
+And then implement it:
+
+**File: BusinessLogic/LookupService.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.BLService.Services;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.BusinessLogic
+{
+    public class LookupService : ILookupService
+    {
+        private readonly ILookupRepository _lookupRepository;
+
+        public LookupService(ILookupRepository lookupRepository)
+        {
+            _lookupRepository = lookupRepository;
+        }
+
+        public async Task<List<LookupItem>> GetLookupByTableAsync(string tableName)
+        {
+            return await _lookupRepository.GetLookupAsync(tableName);
+        }
+    }
+}
+```
+
+---
+
+## 4. Update Your View Models
+
+For a dynamic dropdown (Page3) and dynamic radio/checkboxes (Page4), update the view models so they include a list of lookup items.
+
+**File: Presentation/Models/SurveyPage3ViewModel.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage3ViewModel
+    {
+        [Required(ErrorMessage = "Please select your favorite color.")]
+        public string FavoriteColor { get; set; }
+
+        [Required(ErrorMessage = "Please explain your choice.")]
+        public string Why { get; set; }
+
+        // Dropdown list populated from SQL (table: "FavoriteColor")
+        public List<LookupItem> FavoriteColorOptions { get; set; } = new List<LookupItem>();
+    }
+}
+```
+
+**File: Presentation/Models/SurveyPage4ViewModel.cs**
+
+```csharp
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage4ViewModel
+    {
+        [Required(ErrorMessage = "Please select the weather.")]
+        public string Weather { get; set; }
+
+        [Required(ErrorMessage = "Please select at least one feeling.")]
+        [MinLength(1, ErrorMessage = "Please select at least one feeling.")]
+        public List<string> Feeling { get; set; } = new List<string>();
+
+        // Options for radio buttons (load from table "Weather")
+        public List<LookupItem> WeatherOptions { get; set; } = new List<LookupItem>();
+
+        // Options for checkboxes (load from table "Feeling")
+        public List<LookupItem> FeelingOptions { get; set; } = new List<LookupItem>();
+    }
+}
+```
+
+---
+
+## 5. Update Razor Page Models
+
+### Page3Model.cs (for the dropdown)
+
+Inject the `ILookupService` in the constructor and load the “FavoriteColor” lookup from SQL.
+
+**File: Presentation/Pages/Page3.cshtml.cs**
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using TestSurvey.Presentation.Models;
+using TestSurvey.BLService.Services;
+using System.Threading.Tasks;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page3Model : PageModel
+    {
+        private readonly ILookupService _lookupService;
+
+        public Page3Model(ILookupService lookupService)
+        {
+            _lookupService = lookupService;
+        }
+
+        [BindProperty]
+        public SurveyPage3ViewModel SurveyPage3 { get; set; }
+
+        public IActionResult OnGet()
+        {
+            // Initialize a new instance.
+            SurveyPage3 = new SurveyPage3ViewModel();
+
+            // Load the options from the "FavoriteColor" lookup table.
+            // For simplicity we call .Wait() here – in production, consider making OnGet async.
+            var optionsTask = _lookupService.GetLookupByTableAsync("FavoriteColor");
+            optionsTask.Wait();
+            SurveyPage3.FavoriteColorOptions = optionsTask.Result;
+
+            // If session data exists for Page3, reapply those values.
+            var page3Json = HttpContext.Session.GetString("SurveyPage3");
+            if (!string.IsNullOrEmpty(page3Json))
+            {
+                var sessionModel = JsonSerializer.Deserialize<SurveyPage3ViewModel>(page3Json);
+                if (sessionModel != null)
+                {
+                    SurveyPage3.FavoriteColor = sessionModel.FavoriteColor;
+                    SurveyPage3.Why = sessionModel.Why;
+                }
+            }
+
+            return Page();
+        }
+
+        public IActionResult OnPostNext()
+        {
+            if (!ModelState.IsValid)
+            {
+                return Page();
+            }
+
+            // Save Page3 data in session.
+            HttpContext.Session.SetString("SurveyPage3", JsonSerializer.Serialize(SurveyPage3));
+            return RedirectToPage("Page4");
+        }
+    }
+}
+```
+
+### Page4Model.cs (for radio buttons and checkboxes)
+
+Likewise, inject `ILookupService` and load the options from the relevant tables (“Weather” and “Feeling”).
+
+**File: Presentation/Pages/Page4.cshtml.cs**
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using TestSurvey.Presentation.Models;
+using TestSurvey.Model.Models;
+using TestSurvey.BLService.Services;
+using System.Threading.Tasks;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page4Model : PageModel
+    {
+        private readonly ISurveyService _surveyService;
+        private readonly ILookupService _lookupService;
+
+        public Page4Model(ISurveyService surveyService, ILookupService lookupService)
+        {
+            _surveyService = surveyService;
+            _lookupService = lookupService;
+        }
+
+        [BindProperty]
+        public SurveyPage4ViewModel SurveyPage4 { get; set; }
+
+        public IActionResult OnGet()
+        {
+            // Initialize a new instance.
+            SurveyPage4 = new SurveyPage4ViewModel();
+
+            // Load Weather options (radio) from SQL (table: "Weather")
+            var weatherTask = _lookupService.GetLookupByTableAsync("Weather");
+            weatherTask.Wait();
+            SurveyPage4.WeatherOptions = weatherTask.Result;
+
+            // Load Feeling options (checkboxes) from SQL (table: "Feeling")
+            var feelingTask = _lookupService.GetLookupByTableAsync("Feeling");
+            feelingTask.Wait();
+            SurveyPage4.FeelingOptions = feelingTask.Result;
+
+            // If session data exists for Page4, reapply those values.
+            var page4Json = HttpContext.Session.GetString("SurveyPage4");
+            if (!string.IsNullOrEmpty(page4Json))
+            {
+                var sessionModel = JsonSerializer.Deserialize<SurveyPage4ViewModel>(page4Json);
+                if (sessionModel != null)
+                {
+                    SurveyPage4.Weather = sessionModel.Weather;
+                    SurveyPage4.Feeling = sessionModel.Feeling;
+                }
+            }
+
+            return Page();
+        }
+
+        public IActionResult OnPostBack()
+        {
+            return RedirectToPage("Page3");
+        }
+
+        public IActionResult OnPostSubmit()
+        {
+            if (!ModelState.IsValid)
+            {
+                return Page();
+            }
+
+            // Persist the Page4 data in session.
+            HttpContext.Session.SetString("SurveyPage4", JsonSerializer.Serialize(SurveyPage4));
+
+            // Retrieve previously stored data.
+            var page1Json = HttpContext.Session.GetString("SurveyPage1");
+            var page2Json = HttpContext.Session.GetString("SurveyPage2");
+            var page3Json = HttpContext.Session.GetString("SurveyPage3");
+
+            if (string.IsNullOrEmpty(page1Json) || string.IsNullOrEmpty(page2Json) || string.IsNullOrEmpty(page3Json))
+            {
+                return RedirectToPage("Page1");
+            }
+
+            var surveyPage1 = JsonSerializer.Deserialize<SurveyPage1ViewModel>(page1Json);
+            var surveyPage2 = JsonSerializer.Deserialize<SurveyPage2ViewModel>(page2Json);
+            var surveyPage3 = JsonSerializer.Deserialize<SurveyPage3ViewModel>(page3Json);
+
+            // Combine all the data into the complete Survey domain model.
+            var survey = new Survey
+            {
+                DateOfSurvey = surveyPage1.DateOfSurvey,
+                Name = surveyPage1.Name,
+                Rating = surveyPage2.Rating,
+                Feedback = surveyPage2.Feedback,
+                FavoriteColor = surveyPage3.FavoriteColor,
+                Why = surveyPage3.Why,
+                Weather = SurveyPage4.Weather,
+                Feeling = SurveyPage4.Feeling // List of feelings selected.
+            };
+
+            // Save the survey via your business logic.
+            _surveyService.SaveSurvey(survey);
+
+            // Store the complete survey in session for display on the Thank You page.
+            HttpContext.Session.SetString("SubmittedSurvey", JsonSerializer.Serialize(survey));
+
+            // Clear temporary session data.
+            HttpContext.Session.Remove("SurveyPage1");
+            HttpContext.Session.Remove("SurveyPage2");
+            HttpContext.Session.Remove("SurveyPage3");
+            HttpContext.Session.Remove("SurveyPage4");
+
+            return RedirectToPage("ThankYou");
+        }
+    }
+}
+```
+
+---
+
+## 6. Update the Razor Views
+
+### Page3.cshtml (Dropdown for Favorite Color)
+
+Replace the hardcoded options with a loop:
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page3Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 3</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.FavoriteColor" class="form-label">Favorite Color</label>
+        <select asp-for="SurveyPage3.FavoriteColor" class="form-select">
+            <option value="">Select a color</option>
+            @foreach (var option in Model.SurveyPage3.FavoriteColorOptions)
+            {
+                <option value="@option.Name" @(Model.SurveyPage3?.FavoriteColor == option.Name ? "selected" : "")>
+                    @option.Name
+                </option>
+            }
+        </select>
+        <span asp-validation-for="SurveyPage3.FavoriteColor" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.Why" class="form-label">Why</label>
+        <textarea asp-for="SurveyPage3.Why" class="form-control"></textarea>
+        <span asp-validation-for="SurveyPage3.Why" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-primary">Next</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+### Page4.cshtml (Radio Buttons for Weather and Checkboxes for Feeling)
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page4Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 4</h2>
+<form method="post">
+    <!-- Weather: radio buttons -->
+    <div class="mb-3">
+        <label class="form-label">Weather</label>
+        @foreach (var option in Model.SurveyPage4.WeatherOptions)
+        {
+            <div class="form-check">
+                <input class="form-check-input" type="radio" id="weather_@option.Id"
+                       name="SurveyPage4.Weather" value="@option.Name"
+                       @(Model.SurveyPage4?.Weather == option.Name ? "checked" : "") />
+                <label class="form-check-label" for="weather_@option.Id">@option.Name</label>
+            </div>
+        }
+        <span asp-validation-for="SurveyPage4.Weather" class="text-danger"></span>
+    </div>
+
+    <!-- Feeling: checkboxes -->
+    <div class="mb-3">
+        <label class="form-label">Feeling</label>
+        @foreach (var option in Model.SurveyPage4.FeelingOptions)
+        {
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="feeling_@option.Id"
+                       name="SurveyPage4.Feeling" value="@option.Name"
+                       @(Model.SurveyPage4?.Feeling != null && Model.SurveyPage4.Feeling.Contains(option.Name) ? "checked" : "") />
+                <label class="form-check-label" for="feeling_@option.Id">@option.Name</label>
+            </div>
+        }
+        <span asp-validation-for="SurveyPage4.Feeling" class="text-danger"></span>
+    </div>
+
+    <!-- Navigation buttons -->
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Submit" class="btn btn-primary">Submit</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+---
+
+## 7. Register the New Dependencies in Program.cs
+
+Finally, update your `Program.cs` to register the lookup repository and service along with your existing services.
+
+**File: Program.cs**
+
+```csharp
+using TestSurvey.BusinessLogic;
+using TestSurvey.BLService.Services;
+using TestSurvey.DataAccess;
+using TestSurvey.DAService.Data;
+using Microsoft.Data.SqlClient;  // if needed
+using Microsoft.AspNetCore.Builder;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddRazorPages();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
+
+// Register N‑Tier dependencies.
+builder.Services.AddTransient<ISurveyService, SurveyService>();
+builder.Services.AddSingleton<ISurveyRepository, SurveyRepository>();
+
+// Register the lookup repository and service.
+builder.Services.AddSingleton<ILookupRepository, LookupRepository>();
+builder.Services.AddTransient<ILookupService, LookupService>();
+
+var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+}
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseSession();
+
+app.MapRazorPages();
+
+app.Run();
+```
+
+---
+
+## Final Notes
+
+- **Database Setup:** Ensure you have a connection string named `DefaultConnection` in your configuration and that your SQL Server database contains the tables `FavoriteColor`, `Weather`, and `Feeling`—each with two columns (`Id` and `Name`). For example:
+
+  ```sql
+  -- Table for favorite colors
+  CREATE TABLE FavoriteColor (
+      Id INT IDENTITY(1,1) PRIMARY KEY,
+      Name NVARCHAR(50) NOT NULL
+  );
+  INSERT INTO FavoriteColor (Name) VALUES ('Red'), ('Blue'), ('Green'), ('Yellow');
+
+  -- Table for weather options
+  CREATE TABLE Weather (
+      Id INT IDENTITY(1,1) PRIMARY KEY,
+      Name NVARCHAR(50) NOT NULL
+  );
+  INSERT INTO Weather (Name) VALUES ('Sunny'), ('Rainy'), ('Overcast');
+
+  -- Table for feeling options
+  CREATE TABLE Feeling (
+      Id INT IDENTITY(1,1) PRIMARY KEY,
+      Name NVARCHAR(50) NOT NULL
+  );
+  INSERT INTO Feeling (Name) VALUES ('Happy'), ('Sad'), ('Blah'), ('Extatic');
+  ```
+
+- **Extensibility:** In the future, to add a new survey question (whether using radio, checkbox, or dropdown), create the lookup table (with just Id and Name) and add a corresponding property to the view model. Then update your page model to load the options via `ILookupService`.
+
+This complete implementation should provide you with a solid, generic foundation to dynamically load survey question options from your SQL Server tables that each have only two columns.

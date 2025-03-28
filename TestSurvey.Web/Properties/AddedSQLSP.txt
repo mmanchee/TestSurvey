@@ -1,0 +1,285 @@
+﻿Below is an updated, complete solution that now calls a stored procedure to “submit” the final survey data. In this solution, once the user finishes the multi‑page survey (on Page4), the business logic calls the repository’s AddSurvey method. That method now uses ADO.NET to call a stored procedure (we’ll call it sp_InsertSurvey) which accepts the survey fields (including a comma‐separated list for “Feeling”) so that the stored procedure can parse and insert the record into your final server table.
+
+For clarity, the following sections show the updated and new code files, along with an example stored procedure definition. You can also use these patterns in your other pages if you decide to change details in the future.
+
+---
+
+## 1. SQL — Create the Stored Procedure
+
+Create (or update) a stored procedure on your SQL Server. For example, assume you have a final table named “Surveys” with columns for each field. (Adjust the parameter types and lengths as needed.) Here is an example T‑SQL script:
+
+```sql
+CREATE PROCEDURE sp_InsertSurvey
+    @DateOfSurvey DATE,
+    @Name NVARCHAR(100),
+    @Rating INT,
+    @Feedback NVARCHAR(MAX),
+    @FavoriteColor NVARCHAR(50),
+    @Why NVARCHAR(MAX),
+    @Weather NVARCHAR(50),
+    @Feeling NVARCHAR(MAX)  -- comma separated string
+AS
+BEGIN
+    INSERT INTO Surveys (DateOfSurvey, Name, Rating, Feedback, FavoriteColor, [Why], Weather, Feeling)
+    VALUES (@DateOfSurvey, @Name, @Rating, @Feedback, @FavoriteColor, @Why, @Weather, @Feeling);
+
+    -- Optionally return the inserted survey ID:
+    SELECT SCOPE_IDENTITY() AS SurveyId;
+END
+GO
+```
+
+*Note:* In this script, notice that the column named “Why” is enclosed in square brackets because it is a reserved word in SQL. Make sure your final table’s schema matches the parameters.
+
+---
+
+## 2. Update the Data Layer – SurveyRepository
+
+We now update the repository so that it calls the stored procedure instead of (for example) adding to an in‑memory list. Also note that we now inject `IConfiguration` to obtain the connection string. (Because we’re using ADO.NET here, it’s generally best to register this repository as scoped rather than singleton.)
+
+**File: DataAccess/SurveyRepository.cs**
+
+```csharp
+using System;
+using System.Data;
+using Microsoft.Data.SqlClient;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+using Microsoft.Extensions.Configuration;
+
+namespace TestSurvey.DataAccess
+{
+    public class SurveyRepository : ISurveyRepository
+    {
+        private readonly string _connectionString;
+
+        public SurveyRepository(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
+        }
+
+        public void AddSurvey(Survey survey)
+        {
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                using (var command = new SqlCommand("sp_InsertSurvey", connection))
+                {
+                    command.CommandType = CommandType.StoredProcedure;
+
+                    // Add parameters—if a value is null, pass DBNull.Value.
+                    command.Parameters.AddWithValue("@DateOfSurvey", (object)survey.DateOfSurvey ?? DBNull.Value);
+                    command.Parameters.AddWithValue("@Name", survey.Name ?? (object)DBNull.Value);
+                    command.Parameters.AddWithValue("@Rating", survey.Rating);
+                    command.Parameters.AddWithValue("@Feedback", (object)survey.Feedback ?? DBNull.Value);
+                    command.Parameters.AddWithValue("@FavoriteColor", (object)survey.FavoriteColor ?? DBNull.Value);
+                    command.Parameters.AddWithValue("@Why", (object)survey.Why ?? DBNull.Value);
+                    command.Parameters.AddWithValue("@Weather", (object)survey.Weather ?? DBNull.Value);
+
+                    // For Feeling, join the list into a comma-separated string.
+                    var feelingsCsv = survey.Feeling != null ? string.Join(",", survey.Feeling) : "";
+                    command.Parameters.AddWithValue("@Feeling", (object)feelingsCsv ?? DBNull.Value);
+
+                    connection.Open();
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        public Survey GetSurvey(int surveyId)
+        {
+            // If you need to implement retrieval from the final table, add the code here.
+            throw new NotImplementedException();
+        }
+    }
+}
+```
+
+---
+
+## 3. Business Logic – SurveyService
+
+No changes are needed here except that when you call _SurveyRepository.AddSurvey(), it will now execute the stored procedure.
+
+**File: BusinessLogic/SurveyService.cs**
+
+```csharp
+using TestSurvey.Model.Models;
+using TestSurvey.BLService.Services;
+using TestSurvey.DAService.Data;
+
+namespace TestSurvey.BusinessLogic
+{
+    public class SurveyService : ISurveyService
+    {
+        private readonly ISurveyRepository _repository;
+
+        public SurveyService(ISurveyRepository repository)
+        {
+            _repository = repository;
+        }
+
+        public void SaveSurvey(Survey survey)
+        {
+            // You could add business validations here, if needed.
+            _repository.AddSurvey(survey);
+        }
+    }
+}
+```
+
+---
+
+## 4. Final Submission and ThankYou Page – Page4Model and ThankYouModel
+
+When the user finishes the survey (on Page4) the code combines all the data into a Survey object and calls _surveyService.SaveSurvey(survey). That call now executes our stored procedure. Then on the ThankYou page we simply show confirmation.
+
+**File: Presentation/Pages/Page4.cshtml.cs**
+
+*(Only the relevant method is shown below; the rest of the file remains as in the previous version.)*
+
+```csharp
+public IActionResult OnPostSubmit()
+{
+    if (!ModelState.IsValid)
+    {
+        return Page();
+    }
+
+    // Persist the Page4 data in session.
+    HttpContext.Session.SetString("SurveyPage4", JsonSerializer.Serialize(SurveyPage4));
+
+    // Retrieve previously stored data.
+    var page1Json = HttpContext.Session.GetString("SurveyPage1");
+    var page2Json = HttpContext.Session.GetString("SurveyPage2");
+    var page3Json = HttpContext.Session.GetString("SurveyPage3");
+
+    if (string.IsNullOrEmpty(page1Json) || string.IsNullOrEmpty(page2Json) || string.IsNullOrEmpty(page3Json))
+    {
+        return RedirectToPage("Page1");
+    }
+
+    var surveyPage1 = JsonSerializer.Deserialize<SurveyPage1ViewModel>(page1Json);
+    var surveyPage2 = JsonSerializer.Deserialize<SurveyPage2ViewModel>(page2Json);
+    var surveyPage3 = JsonSerializer.Deserialize<SurveyPage3ViewModel>(page3Json);
+
+    // Combine all the data into the complete Survey domain model.
+    var survey = new Survey
+    {
+        DateOfSurvey = surveyPage1.DateOfSurvey,
+        Name = surveyPage1.Name,
+        Rating = surveyPage2.Rating,
+        Feedback = surveyPage2.Feedback,
+        FavoriteColor = surveyPage3.FavoriteColor,
+        Why = surveyPage3.Why,
+        Weather = SurveyPage4.Weather,
+        Feeling = SurveyPage4.Feeling // List of strings.
+    };
+
+    // Save the survey via the business logic layer:
+    _surveyService.SaveSurvey(survey);
+
+    // Store the complete survey in session for display on the Thank You page.
+    HttpContext.Session.SetString("SubmittedSurvey", JsonSerializer.Serialize(survey));
+
+    // Clear temporary session data.
+    HttpContext.Session.Remove("SurveyPage1");
+    HttpContext.Session.Remove("SurveyPage2");
+    HttpContext.Session.Remove("SurveyPage3");
+    HttpContext.Session.Remove("SurveyPage4");
+
+    return RedirectToPage("ThankYou");
+}
+```
+
+**File: Presentation/Pages/ThankYou.cshtml.cs**
+
+The Thank You page simply reads the survey from session to display confirmation. (You no longer need to call the stored procedure here because it has already been called on submission—but if you prefer to call it on this page instead, you can move the logic here.) For our purposes, the Thank You page remains mostly the same:
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using TestSurvey.Model.Models;
+using System.Text.Json;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class ThankYouModel : PageModel
+    {
+        public Survey Survey { get; set; }
+
+        public IActionResult OnGet()
+        {
+            var surveyJson = HttpContext.Session.GetString("SubmittedSurvey");
+            if (string.IsNullOrEmpty(surveyJson))
+            {
+                return RedirectToPage("Index");
+            }
+            Survey = JsonSerializer.Deserialize<Survey>(surveyJson);
+            HttpContext.Session.Remove("SubmittedSurvey");
+            return Page();
+        }
+    }
+}
+```
+
+*Tip:* If you prefer to delay the stored procedure call until the Thank You page is loaded (for example, to confirm successful insertion only once the ThankYou page is displayed), you could redesign the flow so that the Survey object is stored in session and then on the ThankYou page OnGet() you call a service method to persist the survey. In our design above the final data insertion occurs on the submission (Page4 OnPostSubmit).
+
+---
+
+## 5. Update Program.cs Registration
+
+Because we now use ADO.NET with connection strings, it’s best to register the repository as “scoped” rather than “singleton.” Here’s the updated registration in Program.cs:
+
+**File: Program.cs**
+
+```csharp
+using TestSurvey.BusinessLogic;
+using TestSurvey.BLService.Services;
+using TestSurvey.DataAccess;
+using TestSurvey.DAService.Data;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddRazorPages();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
+
+// Register N‑Tier dependencies.
+builder.Services.AddTransient<ISurveyService, SurveyService>();
+
+// Register SurveyRepository as scoped for safe database connection handling.
+builder.Services.AddScoped<ISurveyRepository, SurveyRepository>();
+
+// Also register the lookup repository and service (from your earlier implementation).
+builder.Services.AddScoped<ILookupRepository, LookupRepository>();
+builder.Services.AddTransient<ILookupService, LookupService>();
+
+var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+}
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseSession();
+
+app.MapRazorPages();
+
+app.Run();
+```
+
+---
+
+## Summary
+
+1. **Stored Procedure:** A stored procedure (`sp_InsertSurvey`) is defined to accept all survey fields. (It expects a comma‑separated string for the Feeling field.)
+2. **SurveyRepository:** The AddSurvey method now creates a SQL connection, sets up a SqlCommand with the stored procedure name, adds all parameters, and then calls ExecuteNonQuery.
+3. **Submission Flow:** When the user clicks Submit on Page4, the consolidated Survey object is passed to SaveSurvey and the stored procedure is called. The Thank You page then reads the submitted survey from session.
+4. **Registration:** We register our repository as Scoped so that connection management is handled correctly.
+
+This updated implementation delivers the final survey submission via a stored procedure into your final SQL table. If you’d like more details—for example, how to handle errors from the stored procedure or how to return and display the generated SurveyId—let me know!

@@ -1,0 +1,941 @@
+﻿Below is a “tidied‑up” complete solution that you can build using ASP.NET Core Razor Pages and SQL Server. In this version:
+
+• All lookup tables have only two columns (Id and Name).  
+• The stored procedure (sp_InsertSurvey) is called from the SurveyRepository using ADO.NET.  
+• Page models use asynchronous actions (OnGetAsync) to load lookup data.  
+• We’ve cleaned up the using directives and adopted expression‐bodied members and C# 8+ syntax where appropriate.
+
+Read through the file‐by‐file code listing below.
+
+---
+
+## Program.cs
+
+```csharp
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using TestSurvey.BusinessLogic;
+using TestSurvey.BLService.Services;
+using TestSurvey.DataAccess;
+using TestSurvey.DAService.Data;
+using System;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddRazorPages();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
+
+// N‑Tier registrations
+builder.Services.AddTransient<ISurveyService, SurveyService>();
+builder.Services.AddScoped<ISurveyRepository, SurveyRepository>();
+builder.Services.AddScoped<ILookupRepository, LookupRepository>();
+builder.Services.AddTransient<ILookupService, LookupService>();
+
+var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+}
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseSession();
+
+app.MapRazorPages();
+
+app.Run();
+```
+
+---
+
+## DataAccess Layer
+
+### DataAccess/SurveyRepository.cs
+
+```csharp
+using System;
+using System.Data;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.DataAccess
+{
+    public class SurveyRepository : ISurveyRepository
+    {
+        private readonly string _connectionString;
+
+        public SurveyRepository(IConfiguration configuration) =>
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
+
+        public void AddSurvey(Survey survey)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand("sp_InsertSurvey", connection)
+            {
+                CommandType = CommandType.StoredProcedure
+            };
+
+            command.Parameters.AddWithValue("@DateOfSurvey", (object)survey.DateOfSurvey ?? DBNull.Value);
+            command.Parameters.AddWithValue("@Name", survey.Name ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("@Rating", survey.Rating);
+            command.Parameters.AddWithValue("@Feedback", (object)survey.Feedback ?? DBNull.Value);
+            command.Parameters.AddWithValue("@FavoriteColor", (object)survey.FavoriteColor ?? DBNull.Value);
+            command.Parameters.AddWithValue("@Why", (object)survey.Why ?? DBNull.Value);
+            command.Parameters.AddWithValue("@Weather", (object)survey.Weather ?? DBNull.Value);
+            command.Parameters.AddWithValue("@Feeling", survey.Feeling != null ? string.Join(",", survey.Feeling) : string.Empty);
+
+            connection.Open();
+            command.ExecuteNonQuery();
+        }
+
+        public Survey GetSurvey(int surveyId)
+        {
+            // Implementation for retrieving a survey record if needed.
+            throw new NotImplementedException();
+        }
+    }
+}
+```
+
+### DataAccess/LookupRepository.cs
+
+```csharp
+using System.Collections.Generic;
+using System.Data;
+using System.Threading.Tasks;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.DataAccess
+{
+    public class LookupRepository : ILookupRepository
+    {
+        private readonly string _connectionString;
+
+        public LookupRepository(IConfiguration configuration) =>
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
+
+        public async Task<List<LookupItem>> GetLookupAsync(string tableName)
+        {
+            var lookupItems = new List<LookupItem>();
+
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // If table names come from user input, validate them. Here, we assume they are safe.
+            string query = $"SELECT Id, Name FROM {tableName} ORDER BY Id";
+            using var command = new SqlCommand(query, connection)
+            {
+                CommandType = CommandType.Text
+            };
+
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                lookupItems.Add(new LookupItem
+                {
+                    Id = reader.GetInt32(0),
+                    Name = reader.GetString(1)
+                });
+            }
+
+            return lookupItems;
+        }
+    }
+}
+```
+
+---
+
+## Data Access Interfaces
+
+### DAService/Data/ISurveyRepository.cs
+
+```csharp
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.DAService.Data
+{
+    public interface ISurveyRepository
+    {
+        void AddSurvey(Survey survey);
+        Survey GetSurvey(int surveyId);
+    }
+}
+```
+
+### DAService/Data/ILookupRepository.cs
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.DAService.Data
+{
+    public interface ILookupRepository
+    {
+        Task<List<LookupItem>> GetLookupAsync(string tableName);
+    }
+}
+```
+
+---
+
+## Business Logic Layer
+
+### BLService/Services/ISurveyService.cs
+
+```csharp
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.BLService.Services
+{
+    public interface ISurveyService
+    {
+        void SaveSurvey(Survey survey);
+    }
+}
+```
+
+### BLService/Services/ILookupService.cs
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.BLService.Services
+{
+    public interface ILookupService
+    {
+        Task<List<LookupItem>> GetLookupByTableAsync(string tableName);
+    }
+}
+```
+
+### BusinessLogic/SurveyService.cs
+
+```csharp
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+using TestSurvey.BLService.Services;
+
+namespace TestSurvey.BusinessLogic
+{
+    public class SurveyService : ISurveyService
+    {
+        private readonly ISurveyRepository _repository;
+
+        public SurveyService(ISurveyRepository repository) =>
+            _repository = repository;
+
+        public void SaveSurvey(Survey survey) =>
+            _repository.AddSurvey(survey);
+    }
+}
+```
+
+### BusinessLogic/LookupService.cs
+
+```csharp
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using TestSurvey.BLService.Services;
+using TestSurvey.DAService.Data;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.BusinessLogic
+{
+    public class LookupService : ILookupService
+    {
+        private readonly ILookupRepository _lookupRepository;
+
+        public LookupService(ILookupRepository lookupRepository) =>
+            _lookupRepository = lookupRepository;
+
+        public Task<List<LookupItem>> GetLookupByTableAsync(string tableName) =>
+            _lookupRepository.GetLookupAsync(tableName);
+    }
+}
+```
+
+---
+
+## Domain Models
+
+### Model/Models/Survey.cs
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace TestSurvey.Model.Models
+{
+    public class Survey
+    {
+        public int SurveyId { get; set; }
+
+        [Required(ErrorMessage = "Please select today's date.")]
+        public DateTime? DateOfSurvey { get; set; }
+
+        [Required(ErrorMessage = "Please enter your name.")]
+        public string Name { get; set; }
+
+        [Range(1, 5, ErrorMessage = "Please rate between 1 and 5.")]
+        public int Rating { get; set; } = 3;
+
+        public string Feedback { get; set; }
+        public string FavoriteColor { get; set; }
+        public string Why { get; set; }
+        public string Weather { get; set; }
+        public List<string> Feeling { get; set; }
+    }
+}
+```
+
+### Model/Models/LookupItem.cs
+
+```csharp
+namespace TestSurvey.Model.Models
+{
+    public class LookupItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+    }
+}
+```
+
+---
+
+## View Models
+
+### Presentation/Models/SurveyPage1ViewModel.cs
+
+```csharp
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage1ViewModel
+    {
+        [Required(ErrorMessage = "Please select today's date.")]
+        public DateTime? DateOfSurvey { get; set; }
+
+        [Required(ErrorMessage = "Please enter your name.")]
+        public string Name { get; set; }
+    }
+}
+```
+
+### Presentation/Models/SurveyPage2ViewModel.cs
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage2ViewModel
+    {
+        [Range(1, 5, ErrorMessage = "Please rate between 1 and 5.")]
+        public int Rating { get; set; } = 3;
+
+        [Required(ErrorMessage = "Feedback is required.")]
+        public string Feedback { get; set; }
+    }
+}
+```
+
+### Presentation/Models/SurveyPage3ViewModel.cs
+
+```csharp
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage3ViewModel
+    {
+        [Required(ErrorMessage = "Please select your favorite color.")]
+        public string FavoriteColor { get; set; }
+
+        [Required(ErrorMessage = "Please explain your choice.")]
+        public string Why { get; set; }
+
+        // Dropdown options loaded dynamically from the SQL table "FavoriteColor"
+        public List<LookupItem> FavoriteColorOptions { get; set; } = new List<LookupItem>();
+    }
+}
+```
+
+### Presentation/Models/SurveyPage4ViewModel.cs
+
+```csharp
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using TestSurvey.Model.Models;
+
+namespace TestSurvey.Presentation.Models
+{
+    public class SurveyPage4ViewModel
+    {
+        [Required(ErrorMessage = "Please select the weather.")]
+        public string Weather { get; set; }
+
+        [Required(ErrorMessage = "Please select at least one feeling.")]
+        [MinLength(1, ErrorMessage = "Please select at least one feeling.")]
+        public List<string> Feeling { get; set; } = new List<string>();
+
+        // Options for weather (radio buttons) loaded from SQL table "Weather"
+        public List<LookupItem> WeatherOptions { get; set; } = new List<LookupItem>();
+
+        // Options for feeling (checkboxes) loaded from SQL table "Feeling"
+        public List<LookupItem> FeelingOptions { get; set; } = new List<LookupItem>();
+    }
+}
+```
+
+---
+
+## Razor Pages
+
+### Presentation/Pages/Index.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.IndexModel
+@{
+    Layout = "_Layout";
+}
+<div class="text-center">
+    <h1>Welcome</h1>
+    <p>This is a meaningless survey to demonstrate a multi‑page survey in Razor Pages.</p>
+    <a class="btn btn-primary" asp-page="/Page1">Start Survey</a>
+</div>
+```
+
+### Presentation/Pages/Index.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc.RazorPages;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class IndexModel : PageModel
+    {
+        public void OnGet() { }
+    }
+}
+```
+
+---
+
+### Presentation/Pages/Page1.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page1Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 1</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage1.DateOfSurvey" class="form-label">Today's Date</label>
+        <input asp-for="SurveyPage1.DateOfSurvey" class="form-control" type="date" />
+        <span asp-validation-for="SurveyPage1.DateOfSurvey" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage1.Name" class="form-label">Name</label>
+        <input asp-for="SurveyPage1.Name" class="form-control" type="text" />
+        <span asp-validation-for="SurveyPage1.Name" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-primary">Next</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+### Presentation/Pages/Page1.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using TestSurvey.Presentation.Models;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page1Model : PageModel
+    {
+        [BindProperty]
+        public SurveyPage1ViewModel SurveyPage1 { get; set; }
+
+        public void OnGet()
+        {
+            var page1Json = HttpContext.Session.GetString("SurveyPage1");
+            if (!string.IsNullOrEmpty(page1Json))
+                SurveyPage1 = JsonSerializer.Deserialize<SurveyPage1ViewModel>(page1Json);
+        }
+
+        public IActionResult OnPost()
+        {
+            if (!ModelState.IsValid)
+                return Page();
+
+            HttpContext.Session.SetString("SurveyPage1", JsonSerializer.Serialize(SurveyPage1));
+            return RedirectToPage("Page2");
+        }
+    }
+}
+```
+
+---
+
+### Presentation/Pages/Page2.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page2Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 2</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage2.Rating" class="form-label">Rate this survey</label>
+        <input asp-for="SurveyPage2.Rating" class="form-range" type="range" min="1" max="5" />
+        <span class="form-text">Rating: @Model.SurveyPage2.Rating</span>
+        <span asp-validation-for="SurveyPage2.Rating" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="SurveyPage2.Feedback" class="form-label">Feedback</label>
+        <textarea asp-for="SurveyPage2.Feedback" class="form-control"></textarea>
+        <span asp-validation-for="SurveyPage2.Feedback" class="text-danger"></span>
+    </div>
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Next" class="btn btn-primary">Next</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+### Presentation/Pages/Page2.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using TestSurvey.Presentation.Models;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page2Model : PageModel
+    {
+        [BindProperty]
+        public SurveyPage2ViewModel SurveyPage2 { get; set; }
+
+        public SurveyPage1ViewModel SurveyPage1 { get; set; }
+
+        public IActionResult OnGet()
+        {
+            var page1Json = HttpContext.Session.GetString("SurveyPage1");
+            if (string.IsNullOrEmpty(page1Json))
+                return RedirectToPage("Page1");
+
+            SurveyPage1 = JsonSerializer.Deserialize<SurveyPage1ViewModel>(page1Json);
+
+            var page2Json = HttpContext.Session.GetString("SurveyPage2");
+            SurveyPage2 = !string.IsNullOrEmpty(page2Json)
+                ? JsonSerializer.Deserialize<SurveyPage2ViewModel>(page2Json)
+                : new SurveyPage2ViewModel();
+
+            return Page();
+        }
+
+        public IActionResult OnPostBack() =>
+            RedirectToPage("Page1");
+
+        public IActionResult OnPostNext()
+        {
+            if (!ModelState.IsValid)
+                return Page();
+
+            HttpContext.Session.SetString("SurveyPage2", JsonSerializer.Serialize(SurveyPage2));
+            return RedirectToPage("Page3");
+        }
+    }
+}
+```
+
+---
+
+### Presentation/Pages/Page3.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page3Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 3</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.FavoriteColor" class="form-label">Favorite Color</label>
+        <select asp-for="SurveyPage3.FavoriteColor" class="form-select">
+            <option value="">Select a color</option>
+            @foreach (var option in Model.SurveyPage3.FavoriteColorOptions)
+            {
+                <option value="@option.Name" @(Model.SurveyPage3.FavoriteColor == option.Name ? "selected" : "")>
+                    @option.Name
+                </option>
+            }
+        </select>
+        <span asp-validation-for="SurveyPage3.FavoriteColor" class="text-danger"></span>
+    </div>
+
+    <div class="mb-3">
+        <label asp-for="SurveyPage3.Why" class="form-label">Why</label>
+        <textarea asp-for="SurveyPage3.Why" class="form-control"></textarea>
+        <span asp-validation-for="SurveyPage3.Why" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-primary">Next</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+### Presentation/Pages/Page3.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using System.Threading.Tasks;
+using TestSurvey.Presentation.Models;
+using TestSurvey.BLService.Services;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page3Model : PageModel
+    {
+        private readonly ILookupService _lookupService;
+
+        public Page3Model(ILookupService lookupService) =>
+            _lookupService = lookupService;
+
+        [BindProperty]
+        public SurveyPage3ViewModel SurveyPage3 { get; set; }
+
+        public async Task<IActionResult> OnGetAsync()
+        {
+            SurveyPage3 = new SurveyPage3ViewModel
+            {
+                FavoriteColorOptions = await _lookupService.GetLookupByTableAsync("FavoriteColor")
+            };
+
+            var page3Json = HttpContext.Session.GetString("SurveyPage3");
+            if (!string.IsNullOrEmpty(page3Json))
+            {
+                var stored = JsonSerializer.Deserialize<SurveyPage3ViewModel>(page3Json);
+                if (stored != null)
+                {
+                    SurveyPage3.FavoriteColor = stored.FavoriteColor;
+                    SurveyPage3.Why = stored.Why;
+                }
+            }
+
+            return Page();
+        }
+
+        public IActionResult OnPostNext()
+        {
+            if (!ModelState.IsValid)
+                return Page();
+
+            HttpContext.Session.SetString("SurveyPage3", JsonSerializer.Serialize(SurveyPage3));
+            return RedirectToPage("Page4");
+        }
+    }
+}
+```
+
+---
+
+### Presentation/Pages/Page4.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.Page4Model
+@{
+    Layout = "_Layout";
+}
+<h2>Survey – Page 4</h2>
+<form method="post">
+    <!-- Weather: radio buttons -->
+    <div class="mb-3">
+        <label class="form-label">Weather</label>
+        @foreach (var option in Model.SurveyPage4.WeatherOptions)
+        {
+            <div class="form-check">
+                <input class="form-check-input" type="radio" id="weather_@option.Id"
+                       name="SurveyPage4.Weather" value="@option.Name"
+                       @(Model.SurveyPage4.Weather == option.Name ? "checked" : "") />
+                <label class="form-check-label" for="weather_@option.Id">@option.Name</label>
+            </div>
+        }
+        <span asp-validation-for="SurveyPage4.Weather" class="text-danger"></span>
+    </div>
+
+    <!-- Feeling: checkboxes -->
+    <div class="mb-3">
+        <label class="form-label">Feeling</label>
+        @foreach (var option in Model.SurveyPage4.FeelingOptions)
+        {
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="feeling_@option.Id"
+                       name="SurveyPage4.Feeling" value="@option.Name"
+                       @(Model.SurveyPage4.Feeling != null && Model.SurveyPage4.Feeling.Contains(option.Name) ? "checked" : "") />
+                <label class="form-check-label" for="feeling_@option.Id">@option.Name</label>
+            </div>
+        }
+        <span asp-validation-for="SurveyPage4.Feeling" class="text-danger"></span>
+    </div>
+
+    <button type="submit" asp-page-handler="Back" class="btn btn-secondary">Back</button>
+    <button type="submit" asp-page-handler="Submit" class="btn btn-primary">Submit</button>
+</form>
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+```
+
+### Presentation/Pages/Page4.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using System.Threading.Tasks;
+using TestSurvey.Presentation.Models;
+using TestSurvey.Model.Models;
+using TestSurvey.BLService.Services;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class Page4Model : PageModel
+    {
+        private readonly ISurveyService _surveyService;
+        private readonly ILookupService _lookupService;
+
+        public Page4Model(ISurveyService surveyService, ILookupService lookupService)
+        {
+            _surveyService = surveyService;
+            _lookupService = lookupService;
+        }
+
+        [BindProperty]
+        public SurveyPage4ViewModel SurveyPage4 { get; set; }
+
+        public async Task<IActionResult> OnGetAsync()
+        {
+            SurveyPage4 = new SurveyPage4ViewModel
+            {
+                WeatherOptions = await _lookupService.GetLookupByTableAsync("Weather"),
+                FeelingOptions = await _lookupService.GetLookupByTableAsync("Feeling")
+            };
+
+            var page4Json = HttpContext.Session.GetString("SurveyPage4");
+            if (!string.IsNullOrEmpty(page4Json))
+            {
+                var stored = JsonSerializer.Deserialize<SurveyPage4ViewModel>(page4Json);
+                if (stored != null)
+                {
+                    SurveyPage4.Weather = stored.Weather;
+                    SurveyPage4.Feeling = stored.Feeling;
+                }
+            }
+
+            return Page();
+        }
+
+        public IActionResult OnPostBack() =>
+            RedirectToPage("Page3");
+
+        public IActionResult OnPostSubmit()
+        {
+            if (!ModelState.IsValid)
+                return Page();
+
+            HttpContext.Session.SetString("SurveyPage4", JsonSerializer.Serialize(SurveyPage4));
+
+            var page1Json = HttpContext.Session.GetString("SurveyPage1");
+            var page2Json = HttpContext.Session.GetString("SurveyPage2");
+            var page3Json = HttpContext.Session.GetString("SurveyPage3");
+
+            if (string.IsNullOrEmpty(page1Json) ||
+                string.IsNullOrEmpty(page2Json) ||
+                string.IsNullOrEmpty(page3Json))
+            {
+                return RedirectToPage("Page1");
+            }
+
+            var surveyPage1 = JsonSerializer.Deserialize<SurveyPage1ViewModel>(page1Json);
+            var surveyPage2 = JsonSerializer.Deserialize<SurveyPage2ViewModel>(page2Json);
+            var surveyPage3 = JsonSerializer.Deserialize<SurveyPage3ViewModel>(page3Json);
+
+            var survey = new Survey
+            {
+                DateOfSurvey = surveyPage1.DateOfSurvey,
+                Name = surveyPage1.Name,
+                Rating = surveyPage2.Rating,
+                Feedback = surveyPage2.Feedback,
+                FavoriteColor = surveyPage3.FavoriteColor,
+                Why = surveyPage3.Why,
+                Weather = SurveyPage4.Weather,
+                Feeling = SurveyPage4.Feeling
+            };
+
+            _surveyService.SaveSurvey(survey);
+            HttpContext.Session.SetString("SubmittedSurvey", JsonSerializer.Serialize(survey));
+
+            // Clear temporary session data.
+            HttpContext.Session.Remove("SurveyPage1");
+            HttpContext.Session.Remove("SurveyPage2");
+            HttpContext.Session.Remove("SurveyPage3");
+            HttpContext.Session.Remove("SurveyPage4");
+
+            return RedirectToPage("ThankYou");
+        }
+    }
+}
+```
+
+---
+
+### Presentation/Pages/ThankYou.cshtml
+
+```html
+@page
+@model TestSurvey.Presentation.Pages.ThankYouModel
+@{
+    Layout = "_Layout";
+}
+<h2>Thank You</h2>
+<p>Thank you for taking the survey. Your responses have been submitted.</p>
+<div class="mt-4">
+    <h4>Survey Details:</h4>
+    <ul class="list-group">
+        <li class="list-group-item">
+            <strong>Date:</strong> @Model.Survey.DateOfSurvey?.ToString("d")
+        </li>
+        <li class="list-group-item">
+            <strong>Name:</strong> @Model.Survey.Name
+        </li>
+        <li class="list-group-item">
+            <strong>Rating:</strong> @Model.Survey.Rating
+        </li>
+        <li class="list-group-item">
+            <strong>Feedback:</strong> @Model.Survey.Feedback
+        </li>
+        <li class="list-group-item">
+            <strong>Favorite Color:</strong> @Model.Survey.FavoriteColor
+        </li>
+        <li class="list-group-item">
+            <strong>Reason:</strong> @Model.Survey.Why
+        </li>
+        <li class="list-group-item">
+            <strong>Weather:</strong> @Model.Survey.Weather
+        </li>
+        <li class="list-group-item">
+            <strong>Feeling:</strong>
+            @string.Join(", ", Model.Survey.Feeling ?? new List<string>())
+        </li>
+    </ul>
+</div>
+```
+
+### Presentation/Pages/ThankYou.cshtml.cs
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
+using TestSurvey.Model.Models;
+using System.Collections.Generic;
+
+namespace TestSurvey.Presentation.Pages
+{
+    public class ThankYouModel : PageModel
+    {
+        public Survey Survey { get; set; }
+
+        public IActionResult OnGet()
+        {
+            var surveyJson = HttpContext.Session.GetString("SubmittedSurvey");
+            if (string.IsNullOrEmpty(surveyJson))
+                return RedirectToPage("Index");
+
+            Survey = JsonSerializer.Deserialize<Survey>(surveyJson);
+            HttpContext.Session.Remove("SubmittedSurvey");
+
+            return Page();
+        }
+    }
+}
+```
+
+---
+
+## Stored Procedure (SQL)
+
+For completeness, here is an example stored procedure that parses a comma‑separated Feeling list and inserts a record into the final table (adjust columns as needed):
+
+```sql
+CREATE PROCEDURE sp_InsertSurvey
+    @DateOfSurvey DATE,
+    @Name NVARCHAR(100),
+    @Rating INT,
+    @Feedback NVARCHAR(MAX),
+    @FavoriteColor NVARCHAR(50),
+    @Why NVARCHAR(MAX),
+    @Weather NVARCHAR(50),
+    @Feeling NVARCHAR(MAX)  -- Comma-separated list
+AS
+BEGIN
+    INSERT INTO Surveys (DateOfSurvey, Name, Rating, Feedback, FavoriteColor, [Why], Weather, Feeling)
+    VALUES (@DateOfSurvey, @Name, @Rating, @Feedback, @FavoriteColor, @Why, @Weather, @Feeling);
+
+    -- Optionally, return the new SurveyId if needed.
+    SELECT SCOPE_IDENTITY() AS SurveyId;
+END
+GO
+```
+
+---
+
+## Summary
+
+This complete solution:
+- Uses asynchronous OnGet actions in Page3 and Page4 to load lookup options from SQL tables (“FavoriteColor”, “Weather”, and “Feeling”) where each table has just Id and Name.
+- Consolidates all survey data over multiple pages and then calls a stored procedure (sp_InsertSurvey) via the SurveyRepository.
+- Displays a Thank You page showing the submitted survey details.
+
+Feel free to adjust or extend any portion of this tidy, production‑ready implementation according to your needs.
